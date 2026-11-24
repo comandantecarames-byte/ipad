@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Painel da Família</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Painel">
+<!--
+  Painel da família para iPad 2 (iOS 9, Safari 9).
+  Escrito em JavaScript antigo (ES5) e CSS sem grid nem variáveis, de propósito.
+  Configure as duas linhas abaixo (SCRIPT_URL e TOKEN). Sem elas, mostra dados de exemplo.
+-->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: #10151c; color: #eef2f6;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-user-select: none; -webkit-tap-highlight-color: rgba(0,0,0,0);
+    overflow: hidden;
+  }
+  .wrap { display: table; width: 100%; height: 100%; table-layout: fixed; }
+  .col { display: table-cell; vertical-align: top; padding: 28px 26px; }
+  .esq { width: 40%; background: #161d27; }
+  .hora { font-size: 112px; font-weight: 200; line-height: 1; letter-spacing: -2px; }
+  .data { font-size: 26px; color: #9fb0c3; margin-top: 8px; }
+  .clima { margin-top: 30px; }
+  .clima-agora { font-size: 54px; font-weight: 300; }
+  .clima-agora span { font-size: 22px; color: #9fb0c3; margin-left: 8px; font-weight: 400; }
+  .prev { margin-top: 14px; font-size: 18px; color: #c9d4e0; }
+  .prev div { padding: 5px 0; border-top: 1px solid #263140; }
+  .prev b { display: inline-block; width: 90px; font-weight: 600; color: #eef2f6; }
+  h2 {
+    font-size: 15px; letter-spacing: 2px; text-transform: uppercase;
+    color: #7f93a8; font-weight: 600; margin: 0 0 10px 0;
+  }
+  .bloco { margin-bottom: 22px; }
+  .avisos div {
+    background: #3a2f12; color: #ffe29a; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 8px; font-size: 19px;
+  }
+  .dia { font-size: 17px; color: #7fb3ff; font-weight: 600; margin: 12px 0 4px; }
+  .ev { font-size: 21px; padding: 7px 0; border-bottom: 1px solid #222c38; }
+  .ev .h { display: inline-block; width: 72px; color: #9fb0c3; font-size: 18px; }
+  .ev.feito { color: #5d6d7e; }
+  .ev .loc { color: #7f93a8; font-size: 16px; }
+  .rot { font-size: 20px; padding: 6px 0; border-bottom: 1px solid #222c38; }
+  .rot .h { display: inline-block; width: 72px; color: #9fb0c3; font-size: 18px; }
+  .rot .q { color: #8fe0b0; font-size: 16px; margin-left: 6px; }
+  .vazio { color: #5d6d7e; font-size: 18px; padding: 6px 0; }
+  .rodape { position: absolute; right: 14px; bottom: 8px; font-size: 12px; color: #4a5868; }
+  .noite { position: fixed; left: 0; top: 0; right: 0; bottom: 0; background: #000; opacity: 0.75; display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="col esq">
+    <div class="hora" id="hora">--:--</div>
+    <div class="data" id="data"></div>
+    <div class="clima" id="clima"></div>
+    <div class="bloco" style="margin-top:28px">
+      <h2>Rotina de hoje</h2>
+      <div id="rotina"></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="bloco avisos" id="avisos"></div>
+    <div class="bloco">
+      <h2>Agenda da família</h2>
+      <div id="agenda"></div>
+    </div>
+  </div>
+</div>
+<div class="rodape" id="rodape"></div>
+<div class="noite" id="noite"></div>
+
+<script>
+// ===== CONFIGURAÇÃO =====
+// A URL do Apps Script e a senha NÃO ficam neste arquivo (ele é público).
+// Abra a página uma vez no iPad assim:
+//   https://<endereco-do-painel>/#url=<URL /exec do Apps Script>&token=<senha>
+// O iPad guarda os dois e a página passa a funcionar sem eles no endereço.
+var SCRIPT_URL = '';
+var TOKEN = '';
+var ATUALIZAR_MIN = 5;          // busca dados novos a cada 5 minutos
+(function () {
+  var h = location.hash.replace(/^#/, ''), partes = h ? h.split('&') : [], i, kv;
+  for (i = 0; i < partes.length; i++) {
+    kv = partes[i].split('=');
+    if (kv[0] === 'url') SCRIPT_URL = decodeURIComponent(kv.slice(1).join('='));
+    if (kv[0] === 'token') TOKEN = decodeURIComponent(kv.slice(1).join('='));
+  }
+  try {
+    if (SCRIPT_URL) {
+      localStorage.setItem('painel_url', SCRIPT_URL);
+      localStorage.setItem('painel_token', TOKEN);
+      history.replaceState(null, '', location.pathname);
+    } else {
+      SCRIPT_URL = localStorage.getItem('painel_url') || '';
+      TOKEN = localStorage.getItem('painel_token') || '';
+    }
+  } catch (e) {}
+})();
+var NOITE_DAS = 22, NOITE_ATE = 6; // escurece a tela nesse horário
+// ========================
+
+var DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+var DIAS_CURTOS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+var MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho',
+  'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+function $(id) { return document.getElementById(id); }
+function dois(n) { return (n < 10 ? '0' : '') + n; }
+function hm(d) { return dois(d.getHours()) + ':' + dois(d.getMinutes()); }
+function esc(t) {
+  return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function semAcento(t) {
+  return String(t).toLowerCase().replace(/[áàâã]/g, 'a').replace(/[éê]/g, 'e')
+    .replace(/[í]/g, 'i').replace(/[óôõ]/g, 'o').replace(/[ú]/g, 'u').replace(/ç/g, 'c');
+}
+function mesmoDia(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function textoClima(c) {
+  if (c === 0) return 'Céu limpo';
+  if (c <= 2) return 'Poucas nuvens';
+  if (c === 3) return 'Nublado';
+  if (c === 45 || c === 48) return 'Neblina';
+  if (c >= 51 && c <= 57) return 'Garoa';
+  if (c >= 61 && c <= 67) return 'Chuva';
+  if (c >= 80 && c <= 82) return 'Pancadas de chuva';
+  if (c >= 95) return 'Tempestade';
+  return '';
+}
+
+function relogio() {
+  var d = new Date();
+  $('hora').innerHTML = hm(d);
+  $('data').innerHTML = DIAS[d.getDay()] + ', ' + d.getDate() + ' de ' + MESES[d.getMonth()];
+  var h = d.getHours();
+  $('noite').style.display = (h >= NOITE_DAS || h < NOITE_ATE) ? 'block' : 'none';
+}
+
+function desenhar(dados) {
+  var agora = new Date();
+  if (!dados || dados.erro) {
+    $('rodape').innerHTML = 'Erro: ' + esc(dados && dados.erro);
+    return;
+  }
+
+  // Clima
+  var c = dados.clima, html = '';
+  if (c) {
+    html += '<div class="clima-agora">' + c.agora + '°<span>' + textoClima(c.codigo) + '</span></div><div class="prev">';
+    for (var i = 0; i < c.dias.length; i++) {
+      var p = c.dias[i].data.split('-');
+      var dd = new Date(+p[0], +p[1] - 1, +p[2]);
+      var nome = i === 0 ? 'Hoje' : (i === 1 ? 'Amanhã' : DIAS_CURTOS[dd.getDay()]);
+      html += '<div><b>' + nome + '</b>' + c.dias[i].min + '° / ' + c.dias[i].max + '°  ·  chuva ' + c.dias[i].chuva + '%</div>';
+    }
+    html += '</div>';
+  }
+  $('clima').innerHTML = html;
+
+  // Avisos
+  html = '';
+  var av = dados.avisos || [];
+  for (i = 0; i < av.length; i++) html += '<div>' + esc(av[i]) + '</div>';
+  $('avisos').innerHTML = html;
+  $('avisos').style.display = av.length ? 'block' : 'none';
+
+  // Rotina de hoje
+  var hoje = semAcento(DIAS_CURTOS[agora.getDay()]);
+  var rot = dados.rotina || [], lin = [];
+  for (i = 0; i < rot.length; i++) {
+    var dia = semAcento(rot[i].dia || '');
+    if (dia === 'todos' || dia.indexOf(hoje) === 0) lin.push(rot[i]);
+  }
+  lin.sort(function (a, b) { return String(a.hora) < String(b.hora) ? -1 : 1; });
+  html = '';
+  for (i = 0; i < lin.length; i++) {
+    html += '<div class="rot"><span class="h">' + esc(lin[i].hora) + '</span>' + esc(lin[i].oque) +
+      (lin[i].quem ? '<span class="q">' + esc(lin[i].quem) + '</span>' : '') + '</div>';
+  }
+  $('rotina').innerHTML = html || '<div class="vazio">Nada na rotina de hoje.</div>';
+
+  // Agenda: agrupa por dia
+  var ev = dados.eventos || [], ultimoDia = '', mostrados = 0;
+  html = '';
+  for (i = 0; i < ev.length && mostrados < 14; i++) {
+    var ini = new Date(ev[i].inicio), fim = new Date(ev[i].fim);
+    if (fim < agora && !mesmoDia(ini, agora)) continue;
+    var chave = ini.getFullYear() + '-' + ini.getMonth() + '-' + ini.getDate();
+    if (ev[i].diaInteiro && ini < agora) chave = 'hoje';
+    if (chave !== ultimoDia) {
+      var amanha = new Date(agora.getTime() + 86400000);
+      var rot2 = mesmoDia(ini, agora) || chave === 'hoje' ? 'Hoje' :
+        (mesmoDia(ini, amanha) ? 'Amanhã' : DIAS[ini.getDay()] + ', ' + ini.getDate() + '/' + dois(ini.getMonth() + 1));
+      html += '<div class="dia">' + rot2 + '</div>';
+      ultimoDia = chave;
+    }
+    var feito = fim < agora ? ' feito' : '';
+    html += '<div class="ev' + feito + '"><span class="h">' + (ev[i].diaInteiro ? 'dia' : hm(ini)) + '</span>' +
+      esc(ev[i].titulo) + (ev[i].local ? ' <span class="loc">· ' + esc(ev[i].local) + '</span>' : '') + '</div>';
+    mostrados++;
+  }
+  $('agenda').innerHTML = html || '<div class="vazio">Nenhum compromisso nos próximos dias.</div>';
+
+  $('rodape').innerHTML = 'Atualizado ' + hm(new Date(dados.geradoEm || agora.getTime()));
+}
+
+// JSONP: funciona no Safari 9 sem precisar de CORS
+var tentativa = 0;
+function buscar() {
+  if (!SCRIPT_URL) { desenhar(exemplo()); return; }
+  var cb = 'painelCb' + (++tentativa);
+  var s = document.createElement('script');
+  var timer = setTimeout(function () {
+    $('rodape').innerHTML = 'Sem conexão · tentando de novo';
+    limpar();
+  }, 30000);
+  function limpar() {
+    try { delete window[cb]; } catch (e) { window[cb] = undefined; }
+    if (s.parentNode) s.parentNode.removeChild(s);
+  }
+  window[cb] = function (d) { clearTimeout(timer); desenhar(d); limpar(); };
+  s.onerror = function () { clearTimeout(timer); $('rodape').innerHTML = 'Sem conexão · tentando de novo'; limpar(); };
+  s.src = SCRIPT_URL + '?token=' + encodeURIComponent(TOKEN) + '&callback=' + cb + '&t=' + new Date().getTime();
+  document.body.appendChild(s);
+}
+
+function exemplo() {
+  var b = new Date(); b.setHours(0, 0, 0, 0);
+  var t = b.getTime(), H = 3600000, D = 86400000;
+  return {
+    geradoEm: new Date().getTime(),
+    avisos: ['Exemplo: abra o painel com #url=...&token=... no endereço','Levar autorização do passeio da escola'],
+    clima: { agora: 27, codigo: 2, dias: [
+      { data: fmt(t), min: 21, max: 30, chuva: 20 },
+      { data: fmt(t + D), min: 22, max: 31, chuva: 60 },
+      { data: fmt(t + 2 * D), min: 20, max: 28, chuva: 80 }] },
+    rotina: [
+      { dia: 'Todos', hora: '07:00', quem: 'Mafalda', oque: 'Café e escovar os dentes' },
+      { dia: 'Todos', hora: '20:30', quem: 'Mafalda', oque: 'Banho e pijama' },
+      { dia: DIAS_CURTOS[b.getDay()], hora: '17:00', quem: 'Guilherme', oque: 'Buscar na natação' }],
+    eventos: [
+      { titulo: 'Reunião de pais', inicio: t + 8 * H, fim: t + 9 * H, local: 'Escola' },
+      { titulo: 'Pediatra Mafalda', inicio: t + 15.5 * H, fim: t + 16.5 * H, local: '' },
+      { titulo: 'Jantar com os avós', inicio: t + D + 19.5 * H, fim: t + D + 22 * H, local: '' },
+      { titulo: 'Feira', inicio: t + 2 * D + 9 * H, fim: t + 2 * D + 10 * H, local: '' }]
+  };
+  function fmt(ms) { var d = new Date(ms); return d.getFullYear() + '-' + dois(d.getMonth() + 1) + '-' + dois(d.getDate()); }
+}
+
+relogio();
+setInterval(relogio, 15000);
+buscar();
+setInterval(buscar, ATUALIZAR_MIN * 60000);
+// Recarrega a página inteira a cada 6 horas para o Safari antigo não acumular memória
+setTimeout(function () { location.reload(); }, 6 * 3600000);
+</script>
+</body>
+</html>
